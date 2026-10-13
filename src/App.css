@@ -48,6 +48,23 @@ body {
   margin-bottom: 6px;
 }
 
+.brand {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 18px;
+}
+
+.logo {
+  height: clamp(90px, 20vh, 200px);
+  width: auto;
+  object-fit: contain;
+}
+
+.brand-text {
+  text-align: center;
+}
+
 .eyebrow {
   margin: 0;
   color: #7a1c00;
@@ -63,7 +80,7 @@ h1 {
   font-size: clamp(22px, 5vh, 52px);
   font-weight: 900;
   letter-spacing: 2px;
-  color: #e90778;
+  color: #fc3c0c;
 }
 
 .subtitle {
@@ -318,8 +335,16 @@ button:disabled {
     padding: 16px 12px;
   }
 
+  .logo {
+    height: 48px;
+  }
+
+  .brand {
+    gap: 10px;
+  }
+
   .eyebrow {
-    font-size: clamp(20px, 6vw, 34px);
+    font-size: clamp(16px, 5vw, 30px);
     letter-spacing: 2px;
   }
 

@@ -165,8 +165,17 @@ export default function App() {
     <main className="page">
       <section className="draw-card">
         <header className="header">
-          <p className="eyebrow">Thanaloram Charitable Society</p>
-          <h1>LUCKY DRAW 2026</h1>
+          <div className="brand">
+            <img
+              className="logo"
+              src="/logo.png"
+              alt="Thanaloram Charitable Society logo"
+            />
+            <div className="brand-text">
+              <p className="eyebrow">Thanaloram Charitable Society</p>
+              <h1>LUCKY DRAW 2026</h1>
+            </div>
+          </div>
           <p className="subtitle">One Number. One Winner. Amazing Prizes!</p>
         </header>
 
