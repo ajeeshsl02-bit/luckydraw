@@ -2,7 +2,48 @@ import { useState, useEffect, useRef, useCallback } from "react";
 import * as XLSX from "xlsx";
 import "./App.css";
 
-const SPIN_SPEED_MS = 10;
+const SPIN_MIN_MS = 25;
+const SPIN_MAX_MS = 80;
+const SMALL_NUMBER_CHANCE = 0.25;
+const SHUFFLE_PASSES = 3;
+
+function secureRandomInt(n) {
+  const limit = Math.floor(4294967296 / n) * n;
+  const buffer = new Uint32Array(1);
+  let value;
+
+  do {
+    crypto.getRandomValues(buffer);
+    value = buffer[0];
+  } while (value >= limit);
+
+  return value % n;
+}
+
+function randInt(a, b) {
+  return a + Math.floor(Math.random() * (b - a + 1));
+}
+
+function shuffleList(list, passes) {
+  const deck = list.slice();
+
+  for (let pass = 0; pass < passes; pass++) {
+    for (let i = deck.length - 1; i > 0; i--) {
+      const j = secureRandomInt(i + 1);
+      const temp = deck[i];
+      deck[i] = deck[j];
+      deck[j] = temp;
+    }
+  }
+
+  return deck;
+}
+
+function makeShuffledDeck(min, max) {
+  const deck = [];
+  for (let n = min; n <= max; n++) deck.push(n);
+  return shuffleList(deck, 1);
+}
 
 export default function App() {
   const [start, setStart] = useState("1");
@@ -15,6 +56,8 @@ export default function App() {
 
   const timerRef = useRef(null);
   const winnersRef = useRef([]);
+  const deckRef = useRef([]);
+  const deckPosRef = useRef(0);
 
   const startDraw = useCallback(() => {
     if (running) return;
@@ -49,16 +92,39 @@ export default function App() {
     setRunning(true);
     setStatus("DRAW IN PROGRESS...");
 
-    timerRef.current = setInterval(() => {
-      const random = Math.floor(Math.random() * (max - min + 1)) + min;
-      setCurrent(random);
-    }, SPIN_SPEED_MS);
+    deckRef.current = makeShuffledDeck(min, max);
+    deckPosRef.current = 0;
+
+    const range = max - min + 1;
+
+    function nextSpinNumber() {
+      if (Math.random() < SMALL_NUMBER_CHANCE) {
+        const small = Math.floor(Math.exp(Math.random() * Math.log(range + 1)));
+        return Math.max(min, Math.min(max, min + small - 1));
+      }
+
+      if (deckPosRef.current >= deckRef.current.length) {
+        deckRef.current = makeShuffledDeck(min, max);
+        deckPosRef.current = 0;
+      }
+
+      const value = deckRef.current[deckPosRef.current];
+      deckPosRef.current += 1;
+      return value;
+    }
+
+    function tick() {
+      setCurrent(nextSpinNumber());
+      timerRef.current = setTimeout(tick, randInt(SPIN_MIN_MS, SPIN_MAX_MS));
+    }
+
+    tick();
   }, [running, start, end, totalPrizes]);
 
   const stopDraw = useCallback(() => {
     if (!running) return;
 
-    clearInterval(timerRef.current);
+    clearTimeout(timerRef.current);
     timerRef.current = null;
 
     const min = Number(start);
@@ -84,7 +150,8 @@ export default function App() {
       return;
     }
 
-    const chosen = available[Math.floor(Math.random() * available.length)];
+    const shuffled = shuffleList(available, SHUFFLE_PASSES);
+    const chosen = shuffled[secureRandomInt(shuffled.length)];
     const prize = winnersRef.current.length + 1;
 
     const updated = [...winnersRef.current, { prize, number: chosen }];
@@ -128,14 +195,16 @@ export default function App() {
   }, [running, startDraw, stopDraw]);
 
   useEffect(() => {
-    return () => clearInterval(timerRef.current);
+    return () => clearTimeout(timerRef.current);
   }, []);
 
   function resetDraw() {
-    clearInterval(timerRef.current);
+    clearTimeout(timerRef.current);
     timerRef.current = null;
 
     winnersRef.current = [];
+    deckRef.current = [];
+    deckPosRef.current = 0;
     setWinners([]);
     setCurrent(null);
     setRunning(false);
