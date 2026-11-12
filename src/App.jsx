@@ -1,14 +1,22 @@
+
 import { useState, useEffect, useRef, useCallback } from "react";
 import * as XLSX from "xlsx";
 import "./App.css";
 
-const SPIN_MIN_MS = 25;
-const SPIN_MAX_MS = 80;
-const SMALL_NUMBER_CHANCE = 0.25;
-const SHUFFLE_PASSES = 3;
+const FAST_SPEED = 15;
+const MEDIUM_SPEED = 60;
+const SLOW_SPEED = 180;
 
+const TOTAL_DURATION = 8000;
+const MEDIUM_START = 6000;
+const SLOW_START = 7000;
+
+// Secure random integer
 function secureRandomInt(n) {
-  const limit = Math.floor(4294967296 / n) * n;
+  if (n <= 1) return 0;
+
+  const range = 4294967296;
+  const limit = Math.floor(range / n) * n;
   const buffer = new Uint32Array(1);
   let value;
 
@@ -20,52 +28,136 @@ function secureRandomInt(n) {
   return value % n;
 }
 
-function randInt(a, b) {
-  return a + Math.floor(Math.random() * (b - a + 1));
-}
-
-function shuffleList(list, passes) {
+// Fisher-Yates Shuffle
+function shuffleList(list) {
   const deck = list.slice();
 
-  for (let pass = 0; pass < passes; pass++) {
-    for (let i = deck.length - 1; i > 0; i--) {
-      const j = secureRandomInt(i + 1);
-      const temp = deck[i];
-      deck[i] = deck[j];
-      deck[j] = temp;
-    }
+  for (let i = deck.length - 1; i > 0; i--) {
+    const j = secureRandomInt(i + 1);
+    [deck[i], deck[j]] = [deck[j], deck[i]];
   }
 
   return deck;
 }
 
+// Create shuffled deck
 function makeShuffledDeck(min, max) {
   const deck = [];
-  for (let n = min; n <= max; n++) deck.push(n);
-  return shuffleList(deck, 1);
+
+  for (let n = min; n <= max; n++) {
+    deck.push(n);
+  }
+
+  return shuffleList(deck);
 }
 
 export default function App() {
   const [start, setStart] = useState("1");
   const [end, setEnd] = useState("10000");
   const [totalPrizes, setTotalPrizes] = useState("51");
+
   const [winners, setWinners] = useState([]);
   const [current, setCurrent] = useState(null);
   const [running, setRunning] = useState(false);
   const [status, setStatus] = useState("READY TO DRAW");
 
   const timerRef = useRef(null);
+  const autoStopRef = useRef(null);
+  const startTimeRef = useRef(null);
+
   const winnersRef = useRef([]);
   const deckRef = useRef([]);
   const deckPosRef = useRef(0);
+  const runningRef = useRef(false);
 
-  const startDraw = useCallback(() => {
-    if (running) return;
+  // Get next spinning number
+  function nextSpinNumber(min, max) {
+    if (deckPosRef.current >= deckRef.current.length) {
+      deckRef.current = makeShuffledDeck(min, max);
+      deckPosRef.current = 0;
+    }
+
+    return deckRef.current[deckPosRef.current++];
+  }
+
+  // Finish draw and select winner
+  const finishDraw = useCallback(() => {
+    if (!runningRef.current) return;
+
+    runningRef.current = false;
+
+    clearTimeout(timerRef.current);
+    clearTimeout(autoStopRef.current);
+
+    timerRef.current = null;
+    autoStopRef.current = null;
 
     const min = Number(start);
     const max = Number(end);
     const limit = Number(totalPrizes);
 
+    if (winnersRef.current.length >= limit) {
+      setRunning(false);
+      setStatus("ALL PRIZES COMPLETED!");
+      return;
+    }
+
+    // Exclude previous winners
+    const used = new Set(
+      winnersRef.current.map((winner) => winner.number)
+    );
+
+    const available = [];
+
+    for (let n = min; n <= max; n++) {
+      if (!used.has(n)) {
+        available.push(n);
+      }
+    }
+
+    if (available.length === 0) {
+      setRunning(false);
+      setStatus("NO NUMBERS AVAILABLE");
+      return;
+    }
+
+    // Equal probability for all remaining numbers
+    const chosen = available[
+      secureRandomInt(available.length)
+    ];
+
+    const prize = winnersRef.current.length + 1;
+
+    const updated = [
+      ...winnersRef.current,
+      {
+        prize,
+        number: chosen,
+      },
+    ];
+
+    winnersRef.current = updated;
+
+    setWinners(updated);
+    setCurrent(chosen);
+    setRunning(false);
+
+    setStatus(
+      prize >= limit
+        ? "ALL PRIZES COMPLETED!"
+        : "PRIZE WINNER SELECTED!"
+    );
+  }, [start, end, totalPrizes]);
+
+  // Start draw
+  const startDraw = useCallback(() => {
+    if (runningRef.current) return;
+
+    const min = Number(start);
+    const max = Number(end);
+    const limit = Number(totalPrizes);
+
+    // Validate settings
     if (
       start.trim() === "" ||
       end.trim() === "" ||
@@ -89,86 +181,49 @@ export default function App() {
       return;
     }
 
-    setRunning(true);
-    setStatus("DRAW IN PROGRESS...");
-
+    // Prepare shuffled deck
     deckRef.current = makeShuffledDeck(min, max);
     deckPosRef.current = 0;
 
-    const range = max - min + 1;
+    runningRef.current = true;
+    startTimeRef.current = Date.now();
 
-    function nextSpinNumber() {
-      if (Math.random() < SMALL_NUMBER_CHANCE) {
-        const small = Math.floor(Math.exp(Math.random() * Math.log(range + 1)));
-        return Math.max(min, Math.min(max, min + small - 1));
-      }
+    setRunning(true);
+    setStatus("DRAW IN PROGRESS...");
 
-      if (deckPosRef.current >= deckRef.current.length) {
-        deckRef.current = makeShuffledDeck(min, max);
-        deckPosRef.current = 0;
-      }
-
-      const value = deckRef.current[deckPosRef.current];
-      deckPosRef.current += 1;
-      return value;
-    }
-
+    // Fast, medium and slow spinning
     function tick() {
-      setCurrent(nextSpinNumber());
-      timerRef.current = setTimeout(tick, randInt(SPIN_MIN_MS, SPIN_MAX_MS));
+      if (!runningRef.current) return;
+
+      const elapsed = Date.now() - startTimeRef.current;
+
+      let nextSpeed = FAST_SPEED;
+
+      if (elapsed >= SLOW_START) {
+        nextSpeed = SLOW_SPEED;
+      } else if (elapsed >= MEDIUM_START) {
+        nextSpeed = MEDIUM_SPEED;
+      }
+
+      setCurrent(nextSpinNumber(min, max));
+
+      timerRef.current = setTimeout(tick, nextSpeed);
     }
 
     tick();
-  }, [running, start, end, totalPrizes]);
 
-  const stopDraw = useCallback(() => {
-    if (!running) return;
-
-    clearTimeout(timerRef.current);
-    timerRef.current = null;
-
-    const min = Number(start);
-    const max = Number(end);
-    const limit = Number(totalPrizes);
-
-    if (winnersRef.current.length >= limit) {
-      setRunning(false);
-      setStatus("ALL PRIZES COMPLETED!");
-      return;
-    }
-
-    const used = new Set(winnersRef.current.map((winner) => winner.number));
-
-    const available = [];
-    for (let n = min; n <= max; n++) {
-      if (!used.has(n)) available.push(n);
-    }
-
-    if (available.length === 0) {
-      setRunning(false);
-      setStatus("NO NUMBERS AVAILABLE");
-      return;
-    }
-
-    const shuffled = shuffleList(available, SHUFFLE_PASSES);
-    const chosen = shuffled[secureRandomInt(shuffled.length)];
-    const prize = winnersRef.current.length + 1;
-
-    const updated = [...winnersRef.current, { prize, number: chosen }];
-
-    winnersRef.current = updated;
-    setWinners(updated);
-    setCurrent(chosen);
-    setRunning(false);
-
-    setStatus(
-      prize >= limit ? "ALL PRIZES COMPLETED!" : "PRIZE WINNER SELECTED!"
+    // Automatically finish after 8 seconds
+    autoStopRef.current = setTimeout(
+      finishDraw,
+      TOTAL_DURATION
     );
-  }, [running, start, end, totalPrizes]);
 
+  }, [start, end, totalPrizes, finishDraw]);
+
+  // Space key: START only
   useEffect(() => {
     function handleSpacebar(event) {
-      const tag = event.target.tagName;
+      const tag = event.target?.tagName;
 
       if (
         event.code !== "Space" ||
@@ -180,9 +235,7 @@ export default function App() {
 
       event.preventDefault();
 
-      if (running) {
-        stopDraw();
-      } else {
+      if (!runningRef.current) {
         startDraw();
       }
     }
@@ -192,28 +245,45 @@ export default function App() {
     return () => {
       window.removeEventListener("keydown", handleSpacebar);
     };
-  }, [running, startDraw, stopDraw]);
+  }, [startDraw]);
 
+  // Clear timers on unmount
   useEffect(() => {
-    return () => clearTimeout(timerRef.current);
+    return () => {
+      runningRef.current = false;
+
+      clearTimeout(timerRef.current);
+      clearTimeout(autoStopRef.current);
+    };
   }, []);
 
+  // Reset draw
   function resetDraw() {
+    runningRef.current = false;
+
     clearTimeout(timerRef.current);
+    clearTimeout(autoStopRef.current);
+
     timerRef.current = null;
+    autoStopRef.current = null;
+    startTimeRef.current = null;
 
     winnersRef.current = [];
     deckRef.current = [];
     deckPosRef.current = 0;
+
     setWinners([]);
     setCurrent(null);
     setRunning(false);
+
     setStart("1");
     setEnd("10000");
     setTotalPrizes("51");
+
     setStatus("READY TO DRAW");
   }
 
+  // Save winners as Excel
   function saveExcel() {
     if (winners.length === 0) return;
 
@@ -223,34 +293,61 @@ export default function App() {
     }));
 
     const sheet = XLSX.utils.json_to_sheet(rows);
-    sheet["!cols"] = [{ wch: 12 }, { wch: 18 }];
+
+    sheet["!cols"] = [
+      { wch: 12 },
+      { wch: 18 },
+    ];
 
     const book = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(book, sheet, "Winners");
-    XLSX.writeFile(book, "LuckyDraw_Winners.xlsx");
+
+    XLSX.utils.book_append_sheet(
+      book,
+      sheet,
+      "Winners"
+    );
+
+    XLSX.writeFile(
+      book,
+      "LuckyDraw_Winners.xlsx"
+    );
   }
 
   return (
-    <main className="page">
+    <div className="page">
       <section className="draw-card">
+
         <header className="header">
           <div className="brand">
+
             <img
-              className="logo"
               src="/logo.png"
               alt="Thanaloram Charitable Society logo"
+              className="logo"
             />
+
             <div className="brand-text">
-              <p className="eyebrow">Thanaloram Charitable Society</p>
+
+              <p className="eyebrow">
+                Thanaloram Charitable Society
+              </p>
+
               <h1>LUCKY DRAW 2026</h1>
+
+              <p className="subtitle">
+                One Number. One Winner. Amazing Prizes!
+              </p>
+
             </div>
           </div>
-          <p className="subtitle">One Number. One Winner. Amazing Prizes!</p>
         </header>
 
+        {/* DRAW SETTINGS */}
         <div className="settings">
+
           <label>
             START NUMBER
+
             <input
               type="number"
               min="1"
@@ -263,6 +360,7 @@ export default function App() {
 
           <label>
             END NUMBER
+
             <input
               type="number"
               min="1"
@@ -275,6 +373,7 @@ export default function App() {
 
           <label>
             TOTAL PRIZES
+
             <input
               type="number"
               min="1"
@@ -284,62 +383,93 @@ export default function App() {
               onChange={(e) => setTotalPrizes(e.target.value)}
             />
           </label>
+
         </div>
 
         <div className="layout">
+
+          {/* LEFT DRAW SECTION */}
           <div className="left">
-            <div className={"number-display " + (running ? "spinning" : "")}>
+
+            <div
+              className={
+                "number-display " +
+                (running ? "spinning" : "")
+              }
+            >
+
               <p className="number-label">
-                {running ? "FINDING THE WINNER" : "LUCKY WINNER"}
+                {running
+                  ? "FINDING THE WINNER"
+                  : "LUCKY WINNER"}
               </p>
 
-              <div className="number">{current ?? "00000"}</div>
+              <div className="number">
+                {current ?? "00000"}
+              </div>
 
-              <p className="status">{status}</p>
+              <p className="status">
+                {status}
+              </p>
+
             </div>
 
+            {/* SINGLE START BUTTON */}
             <div className="controls">
+
               <button
                 className="start-btn"
                 onClick={startDraw}
-                disabled={running || winners.length >= Number(totalPrizes)}
+                disabled={
+                  running ||
+                  winners.length >= Number(totalPrizes)
+                }
               >
-                START
+                {running ? "DRAWING..." : "START DRAW"}
               </button>
 
-              <button
-                className="stop-btn"
-                onClick={stopDraw}
-                disabled={!running}
-              >
-                STOP
-              </button>
             </div>
 
-            <p className="keyboard-hint">
-              KEYBOARD CONTROL: PRESS SPACE TO START / STOP
-            </p>
           </div>
 
+          {/* WINNERS SECTION */}
           <aside className="right">
+
             <div className="winner-heading">
+
               <h2>🏆 WINNERS</h2>
+
               <span>
                 {winners.length} / {totalPrizes}
               </span>
+
             </div>
 
             <div className="winner-list">
+
               {winners.length === 0 ? (
-                <p className="empty">Winners will appear here</p>
+                <p className="empty">
+                  Winners will appear here
+                </p>
               ) : (
                 winners.map((winner) => (
-                  <div className="winner" key={winner.prize}>
-                    <span>PRIZE {winner.prize}</span>
-                    <strong>{winner.number}</strong>
+                  <div
+                    className="winner"
+                    key={winner.prize}
+                  >
+
+                    <span>
+                      PRIZE {winner.prize}
+                    </span>
+
+                    <strong>
+                      {winner.number}
+                    </strong>
+
                   </div>
                 ))
               )}
+
             </div>
 
             <button
@@ -350,12 +480,18 @@ export default function App() {
               ⬇️ SAVE AS EXCEL
             </button>
 
-            <button className="reset-btn" onClick={resetDraw}>
+            <button
+              className="reset-btn"
+              onClick={resetDraw}
+            >
               ↻ RESET DRAW
             </button>
+
           </aside>
+
         </div>
+
       </section>
-    </main>
+    </div>
   );
 }
